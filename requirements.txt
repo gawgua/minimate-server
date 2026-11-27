@@ -1,0 +1,11 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+torch>=2.5
+qwen-asr==0.0.6
+numpy>=1.26,<3
+python-dotenv>=1,<2
+huggingface-hub>=0.34,<1
+websockets>=14,<18
+# The TF-IDF intent pipeline was pickled with scikit-learn 1.9; keep the minor version.
+scikit-learn>=1.9,<1.10
+joblib>=1.5,<1.7

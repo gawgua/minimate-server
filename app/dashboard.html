@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recordings and device log · Minimate</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font: 100%/1.55 system-ui, sans-serif;
+      color: #15242d;
+      background: #edf3f5;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { background: #102832; color: #fff; }
+    header div, main { max-width: 69rem; margin: auto; padding-inline: clamp(1rem, 5vw, 3rem); }
+    header div { padding-block: 2.75rem; }
+    h1 { margin: 0 0 0.4rem; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -0.05em; }
+    header p { color: #cee3e7; margin: 0; }
+    main { padding-block: 2rem 4rem; }
+    h2 { margin: 0; font-size: 1.25rem; }
+    h3 { margin: 0 0 0.6rem; font-size: 0.94rem; }
+    #status { color: #445c67; margin: 0.35rem 0 1.4rem; }
+    #recordings { display: grid; gap: 0.9rem; }
+    article {
+      display: grid;
+      grid-template-columns: minmax(13rem, 2fr) minmax(0, 3fr);
+      background: #fff;
+      border: 1px solid #c8d8dd;
+      border-radius: 0.9rem;
+    }
+    article > div { padding: 1.25rem; min-width: 0; }
+    article > div + div { border-inline-start: 1px solid #dce7e9; }
+    time, .meta { font-size: 0.875rem; color: #445c67; }
+    audio { width: 100%; margin: 0.65rem 0 0.3rem; }
+    .track { margin-top: 1rem; }
+    .track h4 { margin: 0; font-size: 0.875rem; }
+    a { color: #175d66; text-underline-offset: 0.2em; font-size: 0.9rem; }
+    a:focus-visible, audio:focus-visible { outline: 2px solid #175d66; outline-offset: 3px; }
+    .transcript { margin: 0; font-size: 1.125rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .meta { margin: 0.65rem 0 0; }
+    #model-panel {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.6rem 0.9rem;
+      margin-bottom: 2rem;
+      padding: 1rem 1.25rem;
+      background: #fff;
+      border: 1px solid #c8d8dd;
+      border-radius: 0.9rem;
+    }
+    #model-panel label { font-weight: 600; }
+    #intent-model {
+      font: inherit;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid #9fb6bd;
+      border-radius: 0.5rem;
+      background: #fff;
+      color: inherit;
+    }
+    #intent-model:focus-visible { outline: 2px solid #175d66; outline-offset: 2px; }
+    #intent-model:disabled { color: #6a7f87; background: #eef3f4; }
+    #model-status { color: #445c67; font-variant-numeric: tabular-nums; }
+    #model-status.error { color: #9b2c2c; }
+    #logs-section { margin-top: 2.5rem; }
+    #log-status { color: #445c67; margin: 0.35rem 0 0.9rem; }
+    #logs {
+      margin: 0;
+      max-height: 24rem;
+      overflow: auto;
+      padding: 1rem 1.25rem;
+      background: #102832;
+      color: #dff0f2;
+      border-radius: 0.9rem;
+      font: 0.85rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    #logs:empty { display: none; }
+    #logs .when { color: #8fb3bb; }
+    @media (max-width: 42rem) {
+      article { grid-template-columns: 1fr; }
+      article > div + div { border-inline-start: 0; border-top: 1px solid #dce7e9; }
+    }
+  </style>
+</head>
+<body>
+  <header><div>
+    <h1>Minimate recordings</h1>
+    <p>Compare the original recording and the filtered audio used for transcription.</p>
+  </div></header>
+  <main>
+    <section id="model-panel" aria-label="Intent model">
+      <label for="intent-model">Intent model</label>
+      <select id="intent-model" disabled></select>
+      <span id="model-status" role="status" aria-live="polite">Loading model status…</span>
+    </section>
+    <h2>Recent recordings</h2>
+    <p id="status" role="status">Loading recordings…</p>
+    <div id="recordings"></div>
+    <section id="logs-section" aria-labelledby="logs-heading">
+      <h2 id="logs-heading">Device log</h2>
+      <p id="log-status" role="status">Loading device log…</p>
+      <div id="logs" tabindex="0" aria-label="Device log lines"></div>
+    </section>
+  </main>
+  <template id="clip-template">
+    <article>
+      <div>
+        <h3>Recording</h3>
+        <time></time><span class="duration"></span>
+        <div class="track original">
+          <h4>Original</h4>
+          <audio controls preload="none" aria-label="Play original audio"></audio>
+          <a download>Download original WAV</a>
+        </div>
+        <div class="track filtered">
+          <h4>Filtered</h4>
+          <audio controls preload="none" aria-label="Play filtered audio"></audio>
+          <a download>Download filtered WAV</a>
+        </div>
+      </div>
+      <div>
+        <h3>Transcript</h3>
+        <p class="transcript" lang="vi"></p>
+        <p class="meta" hidden></p>
+      </div>
+    </article>
+  </template>
+  <script>
+    const list = document.querySelector("#recordings");
+    const status = document.querySelector("#status");
+    const template = document.querySelector("#clip-template");
+    const cards = new Map();
+
+    function render(clips) {
+      const current = new Set(clips.map(clip => clip.id));
+      for (const [id, card] of cards) {
+        if (!current.has(id)) {
+          card.remove();
+          cards.delete(id);
+        }
+      }
+      for (const clip of [...clips].reverse()) {
+        let card = cards.get(clip.id);
+        if (!card) {
+          card = template.content.firstElementChild.cloneNode(true);
+          const time = card.querySelector("time");
+          time.dateTime = clip.recorded_at;
+          time.textContent = new Date(clip.recorded_at).toLocaleString();
+          card.querySelector(".duration").textContent = ` · ${clip.duration.toFixed(2)} s`;
+          const wav = `/dashboard/recordings/${encodeURIComponent(clip.id)}.wav`;
+          for (const variant of ["original", "filtered"]) {
+            const track = card.querySelector(`.${variant}`);
+            const url = variant === "filtered" ? `${wav}?filtered=true` : wav;
+            track.querySelector("audio").src = url;
+            const download = track.querySelector("a");
+            download.href = url;
+            download.download = `minimate-${clip.id}-${variant}.wav`;
+          }
+          cards.set(clip.id, card);
+          list.prepend(card);
+        }
+        const transcript = card.querySelector(".transcript");
+        transcript.lang = clip.result?.text ? "vi" : "en";
+        transcript.textContent = clip.error ??
+          (clip.result ? (clip.result.text || "Empty transcript") : "Transcribing…");
+        const intent = clip.result?.intent;
+        const meta = card.querySelector(".meta");
+        meta.hidden = !intent;
+        meta.textContent = intent ? describeIntent(intent) : "";
+      }
+      const message = clips.length
+        ? `${clips.length} of the last 10 recordings · Cleared on restart`
+        : "No recordings yet. Send an utterance from the ESP32.";
+      if (status.textContent !== message) status.textContent = message;
+    }
+
+    const logs = document.querySelector("#logs");
+    const logStatus = document.querySelector("#log-status");
+    let lastSeq = null;
+
+    function renderLogs(entries) {
+      const newest = entries.at(-1)?.seq ?? 0;
+      if (newest === lastSeq) return;
+      lastSeq = newest;
+      // Keep following new lines only when the reader is already at the bottom.
+      const following = logs.scrollTop + logs.clientHeight >= logs.scrollHeight - 8;
+      logs.replaceChildren(...entries.map(entry => {
+        const line = document.createElement("div");
+        const when = document.createElement("span");
+        when.className = "when";
+        when.textContent = `${new Date(entry.received_at).toLocaleTimeString()}  ${entry.device}  `;
+        line.append(when, entry.message);
+        return line;
+      }));
+      if (following) logs.scrollTop = logs.scrollHeight;
+      logStatus.textContent = entries.length
+        ? `Last ${entries.length} lines from the ESP32 · Cleared on restart`
+        : "No device log yet. Lines appear once the ESP32 connects.";
+    }
+
+    async function refreshLogs() {
+      try {
+        const response = await fetch("/dashboard/logs", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderLogs(await response.json());
+      } catch {
+        logStatus.textContent = "Could not refresh the device log. Retrying…";
+      }
+    }
+
+    const modelSelect = document.querySelector("#intent-model");
+    const modelStatus = document.querySelector("#model-status");
+    const modelNames = new Map();
+    let modelTimer = null;
+
+    function describeIntent(intent) {
+      let text = `Intent · ${intent.label} (${Math.round(intent.score * 100)}%)`;
+      if (intent.model) text += ` · ${modelNames.get(intent.model) ?? intent.model}`;
+      if (intent.accepted === false) text += " · below threshold, sent no intent";
+      return text;
+    }
+
+    function renderModel(state) {
+      if (!modelSelect.options.length) {
+        const none = new Option("No model loaded", "");
+        none.disabled = true;
+        modelSelect.add(none);
+        for (const option of state.options) {
+          modelNames.set(option.key, option.name);
+          modelSelect.add(new Option(option.name, option.key));
+        }
+      }
+      for (const option of state.options) {
+        const element = [...modelSelect.options].find(item => item.value === option.key);
+        element.disabled = !option.available;
+        element.textContent = option.available ? option.name : `${option.name} (files missing)`;
+      }
+      // Changes are blocked while a model loads.
+      modelSelect.disabled = !state.enabled || state.loading !== null;
+      modelSelect.value = state.loading ?? state.active ?? "";
+      modelStatus.classList.toggle("error", Boolean(state.error));
+      if (!state.enabled) {
+        modelStatus.textContent = "Intent classification is off (INTENT_ENABLED=false)";
+      } else if (state.loading) {
+        const stage = state.stage ? ` · ${state.stage}` : "";
+        modelStatus.textContent = `Loading ${modelNames.get(state.loading)}… ${state.progress}%${stage}`;
+      } else if (state.error) {
+        modelStatus.textContent = `${state.error}. Choose a model to try again.`;
+      } else if (state.active) {
+        modelStatus.textContent = `${modelNames.get(state.active)} ready · only this model is in memory`;
+      } else {
+        modelStatus.textContent = "No intent model loaded";
+      }
+    }
+
+    async function refreshModel() {
+      clearTimeout(modelTimer);
+      let loading = false;
+      try {
+        const response = await fetch("/dashboard/intent-model", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const state = await response.json();
+        renderModel(state);
+        loading = state.loading !== null;
+      } catch {
+        modelStatus.classList.add("error");
+        modelStatus.textContent = "Could not read the intent model status. Retrying…";
+      } finally {
+        // Poll quickly while loading so the percentage stays current.
+        modelTimer = setTimeout(refreshModel, loading ? 400 : 3000);
+      }
+    }
+
+    modelSelect.addEventListener("change", async () => {
+      const key = modelSelect.value;
+      modelSelect.disabled = true;
+      modelStatus.classList.remove("error");
+      modelStatus.textContent = `Starting ${modelNames.get(key)}…`;
+      try {
+        const response = await fetch("/dashboard/intent-model", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: key }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail ?? `HTTP ${response.status}`);
+        }
+      } catch (error) {
+        modelStatus.classList.add("error");
+        modelStatus.textContent = error.message;
+        setTimeout(refreshModel, 2500);
+        return;
+      }
+      refreshModel();
+    });
+    refreshModel();
+
+    async function refresh() {
+      refreshLogs();
+      try {
+        const response = await fetch("/dashboard/recordings", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+      } catch {
+        status.textContent = "Could not refresh recordings. Retrying…";
+      } finally {
+        setTimeout(refresh, 2000);
+      }
+    }
+    refresh();
+  </script>
+</body>
+</html>
